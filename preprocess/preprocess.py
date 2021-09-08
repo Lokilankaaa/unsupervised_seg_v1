@@ -24,11 +24,11 @@ def create_patch_index(split):
     return np.dstack(np.meshgrid(index, index)).reshape(-1, 2)
 
 
-def sampler(num, patch_size, positive_pt, indexes, directory, resize, imglist, dst):
+def sampler(num, patch_size, positive_pt, indexes, f_directory, b_directory, resize, imglist, dst):
     for i in range(num):
-        pairs = random.sample(imglist, 2)
-        img1 = read_img(os.path.join(directory, pairs[0]), resize)
-        img2 = read_img(os.path.join(directory, pairs[1]), resize)
+        pairs = [random.choice(imglist['f']), random.choice(imglist['b'])]
+        img1 = read_img(os.path.join(f_directory, pairs[0]), resize)
+        img2 = read_img(os.path.join(b_directory, pairs[1]), resize)
         res = img2.copy()
         labels = np.zeros(resize)
 
@@ -46,8 +46,11 @@ def sampler(num, patch_size, positive_pt, indexes, directory, resize, imglist, d
 
         cv2.imwrite(os.path.join(dst, 'imgs', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '.jpg'), res)
         cv2.imwrite(os.path.join(dst, 'labels', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '_labels.jpg'), labels)
+        cv2.imwrite(os.path.join(dst, 'reference_img', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '_r.jpg'),
+                    img1)
 
-def sample_from_directory(directory, num, positive_pt, split, dst, workers=10, resize=(256, 256)):
+
+def sample_from_directory(f_directory, b_directory, num, positive_pt, split, dst, workers=10, resize=(256, 256)):
     """
     :param directory: source directory to sample training data from
     :param num: number of training examples
@@ -58,13 +61,16 @@ def sample_from_directory(directory, num, positive_pt, split, dst, workers=10, r
     :param resize: the size of training img
     :return: None
     """
-    if not os.path.exists(directory):
+    if not os.path.exists(f_directory) or not os.path.exists(b_directory):
         return None
     else:
         os.mkdir(dst) if not os.path.exists(dst) else None
         os.mkdir(os.path.join(dst, 'imgs')) if not os.path.exists(os.path.join(dst, 'imgs')) else None
         os.mkdir(os.path.join(dst, 'labels')) if not os.path.exists(os.path.join(dst, 'labels')) else None
-        imglist = os.listdir(directory)
+        os.mkdir(os.path.join(dst, 'reference_img')) if not os.path.exists(os.path.join(dst, 'reference_img')) else None
+        imglist = dict()
+        imglist['f'] = os.listdir(f_directory)
+        imglist['b'] = os.listdir(b_directory)
         indexes = create_patch_index(split)
         patch_size = int(resize[0] / split), int(resize[1] / split)
 
@@ -72,7 +78,7 @@ def sample_from_directory(directory, num, positive_pt, split, dst, workers=10, r
             raise Exception('No enough imgs')
 
         pool = [mp.Process(target=sampler,
-                           args=(num // workers, patch_size, positive_pt, indexes, directory, resize, imglist, dst))
+                           args=(num // workers, patch_size, positive_pt, indexes, f_directory, b_directory, resize, imglist, dst))
                 for _ in range(workers)]
         for p in pool:
             p.start()
@@ -83,4 +89,4 @@ def sample_from_directory(directory, num, positive_pt, split, dst, workers=10, r
 
 
 if __name__ == '__main__':
-    sample_from_directory('../datasets/data/VOCdevkit/VOC2012/JPEGImages/', 1000, 0.5, 8, '../test_sample_out', 12)
+    sample_from_directory('../datasets/data/portrait', '../datasets/data/scene', 1000, 0.5, 8, '../test_sample_out', 12)

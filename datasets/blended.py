@@ -33,6 +33,7 @@ class Blended(data.Dataset):
     def __init__(self, root, transform=None):
         self.imgs = list_files(os.path.join(root, 'imgs'), 'jpg', True)
         self.labels = list_files(os.path.join(root, 'labels'), 'jpg', True)
+        self.reference_img = list_files(os.path.join(root, 'reference_img'), 'jpg', True)
         # self.transform = transforms.Compose([
         #     transforms.ToTensor(),
         #     transforms.Normalize([0.485, 0.456, 0.406],
@@ -44,7 +45,8 @@ class Blended(data.Dataset):
     def __getitem__(self, idx):
         img = cv2.imread(self.imgs[idx], cv2.COLOR_BGR2RGB)
         label = cv2.imread(self.labels[idx], cv2.CV_8UC1)
-        return self.transform(img, label)
+        r = cv2.imread(self.reference_img[idx], cv2.COLOR_BGR2RGB)
+        return self.transform(img, label), self.transform(r, label)
 
     def __len__(self):
         return len(self.imgs)

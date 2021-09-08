@@ -178,12 +178,13 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
         img_id = 0
 
     with torch.no_grad():
-        for i, (images, labels) in tqdm(enumerate(loader)):
+        for i, ((images, labels), (r, _)) in tqdm(enumerate(loader)):
 
             images = images.to(device, dtype=torch.float32)
             labels = labels.to(device, dtype=torch.long)
+            r = r.to(device, dtype=torch.float32)
 
-            outputs = model(images)
+            outputs = model(images, r)
             preds = outputs.detach().max(dim=1)[1].cpu().numpy()
             targets = labels.cpu().numpy()
 
@@ -251,9 +252,9 @@ def main():
 
     train_dst, val_dst = get_dataset(opts)
     train_loader = data.DataLoader(
-        train_dst, batch_size=opts.batch_size, shuffle=True, num_workers=2)
+        train_dst, batch_size=opts.batch_size, shuffle=True, num_workers=2, drop_last=True)
     val_loader = data.DataLoader(
-        val_dst, batch_size=opts.val_batch_size, shuffle=True, num_workers=2)
+        val_dst, batch_size=opts.val_batch_size, shuffle=True, num_workers=2, drop_last=True)
     print("Dataset: %s, Train set: %d, Val set: %d" %
           (opts.dataset, len(train_dst), len(val_dst)))
 
@@ -347,14 +348,15 @@ def main():
         # =====  Train  =====
         model.train()
         cur_epochs += 1
-        for (images, labels) in train_loader:
+        for ((images, labels), (r, _)) in train_loader:
             cur_itrs += 1
 
             images = images.to(device, dtype=torch.float32)
             labels = labels.to(device, dtype=torch.long)
+            r = r.to(device, dtype=torch.float32)
 
             optimizer.zero_grad()
-            outputs = model(images)
+            outputs = model(images, r)
             loss = criterion(outputs, labels)
             loss.backward()
             optimizer.step()

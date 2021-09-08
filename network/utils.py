@@ -11,10 +11,12 @@ class _SimpleSegmentationModel(nn.Module):
         self.backbone = backbone
         self.classifier = classifier
 
-    def forward(self, x):
+    def forward(self, x, reference_img=None):
         input_shape = x.shape[-2:]
         features = self.backbone(x)
-        x = self.classifier(features)
+        r = self.backbone(reference_img)
+
+        x = self.classifier(features, r)
         x = F.interpolate(x, size=input_shape, mode='bilinear', align_corners=False)
         return x
 

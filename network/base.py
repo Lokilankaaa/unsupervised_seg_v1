@@ -36,7 +36,7 @@ class DeepLabHeadV3Plus(nn.Module):
         self.aspp = ASPP(in_channels, aspp_dilate)
 
         self.classifier = nn.Sequential(
-            nn.Conv2d(304, 256, 3, padding=1, bias=False),
+            nn.Conv2d(560, 256, 3, padding=1, bias=False),
             nn.BatchNorm2d(256),
             nn.ReLU(inplace=True),
             nn.Conv2d(256, num_classes, 1)
@@ -47,11 +47,14 @@ class DeepLabHeadV3Plus(nn.Module):
         low_level_feature = self.project(feature['low_level'])
         output_feature = self.aspp(feature['out'])
 
-        # r = self.
+        r = self.aspp(reference_img['out'])
+
 
         output_feature = F.interpolate(output_feature, size=low_level_feature.shape[2:], mode='bilinear',
                                        align_corners=False)
-        return self.classifier(torch.cat([low_level_feature, output_feature], dim=1))
+        r = F.interpolate(r, size=low_level_feature.shape[2:], mode='bilinear',
+                                       align_corners=False)
+        return self.classifier(torch.cat([low_level_feature, output_feature, r], dim=1))
 
     def _init_weight(self):
         for m in self.modules():
