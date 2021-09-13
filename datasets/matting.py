@@ -1,3 +1,5 @@
+import random
+
 import torch
 import torch.utils.data as data
 import numpy as np
@@ -70,17 +72,15 @@ class Matting(data.Dataset):
     def __getitem__(self, i):
         img_path = self.images[i]
         mask_path = self.masks[i]
+        reference_img_path = random.choice(self.images)
 
         image = np.array(Image.open(img_path).convert("RGB"))
+        reference_img = np.array(Image.open(reference_img_path).convert("RGB"))
         mask = np.array(Image.open(mask_path).convert("RGBA"), dtype=np.float32)[:, :, 3]
         mask[mask < 255] = 0
 
         mask[mask == 255.0] = 1
-        if self.transform is not None:
-            aug = self.transform(image=image, mask=mask)
-            image = aug['image']
-            mask = aug['mask']
-        return image, mask
+        return self.transform(image, mask), self.transform(reference_img, reference_img)
 
     @classmethod
     def decode_target(cls, mask):

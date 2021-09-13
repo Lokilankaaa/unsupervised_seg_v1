@@ -8,6 +8,7 @@ import numpy as np
 
 from torch.utils import data
 from datasets import VOCSegmentation, Cityscapes, Blended
+from datasets.matting import Matting
 from utils import ext_transforms as et
 from metrics import StreamSegMetrics
 
@@ -27,7 +28,7 @@ def get_argparser():
     parser.add_argument("--data_root", type=str, default='./datasets/data',
                         help="path to Dataset")
     parser.add_argument("--dataset", type=str, default='voc',
-                        choices=['voc', 'cityscapes', 'blended'], help='Name of dataset')
+                        choices=['voc', 'cityscapes', 'blended', 'matting'], help='Name of dataset')
     parser.add_argument("--num_classes", type=int, default=None,
                         help="num classes (default: None)")
 
@@ -53,7 +54,7 @@ def get_argparser():
     parser.add_argument("--step_size", type=int, default=10000)
     parser.add_argument("--crop_val", action='store_true', default=False,
                         help='crop validation (default: False)')
-    parser.add_argument("--batch_size", type=int, default=8,
+    parser.add_argument("--batch_size", type=int, default=16,
                         help='batch size (default: 16)')
     parser.add_argument("--val_batch_size", type=int, default=1,
                         help='batch size for validation (default: 4)')
@@ -151,10 +152,10 @@ def get_dataset(opts):
 
     if opts.dataset == 'blended':
         transform = et.ExtCompose([
-                et.ExtToTensor(),
-                et.ExtNormalize(mean=[0.485, 0.456, 0.406],
-                                std=[0.229, 0.224, 0.225]),
-            ])
+            et.ExtToTensor(),
+            et.ExtNormalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225]),
+        ])
         dataset = Blended(root=opts.data_root, transform=transform)
         data_len = len(dataset)
         train_dst, val_dst = torch.utils.data.random_split(
@@ -163,7 +164,22 @@ def get_dataset(opts):
             generator=torch.Generator().manual_seed(0)
         )
 
-    return train_dst, val_dst
+    if opts.dataset == 'matting':
+        transform = et.ExtCompose([
+            et.ExtToTensor(),
+            et.ExtNormalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225]),
+        ])
+        dataset = Matting(img_dir=os.path.join(opts.data_root, 'clip_img'), mask_dir=os.path.join(
+            opts.data_root, 'matting'), transform=transform)
+        data_len = len(dataset)
+        train_dst, val_dst = torch.utils.data.random_split(
+            dataset=dataset,
+            lengths=[int(0.8 * data_len), data_len - int(0.8 * data_len)],
+            generator=torch.Generator().manual_seed(0)
+        )
+
+        return train_dst, val_dst
 
 
 def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
@@ -229,6 +245,8 @@ def main(alpha=0.1):
     elif opts.dataset.lower() == 'cityscapes':
         opts.num_classes = 19
     elif opts.dataset.lower() == 'blended':
+        opts.num_classes = 2
+    elif opts.dataset.lower() == 'matting':
         opts.num_classes = 2
 
     # Setup visualization
@@ -334,12 +352,14 @@ def main(alpha=0.1):
     # ==========   Train Loop   ==========#
     vis_sample_id = np.random.randint(0, len(val_loader), opts.vis_num_samples,
                                       np.int32) if opts.enable_vis else None  # sample idxs for visualization
-    denorm = utils.Denormalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # denormalization for ori images
+    denorm = utils.Denormalize(mean=[0.485, 0.456, 0.406],
+                               std=[0.229, 0.224, 0.225])  # denormalization for ori images
 
     if opts.test_only:
         model.eval()
         val_score, ret_samples = validate(
-            opts=opts, model=model, loader=val_loader, device=device, metrics=metrics, ret_samples_ids=vis_sample_id)
+            opts=opts, model=model, loader=val_loader, device=device, metrics=metrics,
+            ret_samples_ids=vis_sample_id)
         print(metrics.to_str(val_score))
         return
 
