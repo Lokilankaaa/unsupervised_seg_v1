@@ -7,6 +7,7 @@ import argparse
 import numpy as np
 
 from torch.utils import data
+from torch.utils.tensorboard import SummaryWriter
 from datasets import VOCSegmentation, Cityscapes, Blended
 from datasets.matting import Matting
 from utils import ext_transforms as et
@@ -175,7 +176,7 @@ def get_dataset(opts):
         data_len = len(dataset)
         train_dst, val_dst = torch.utils.data.random_split(
             dataset=dataset,
-            lengths=[int(0.8 * data_len), data_len - int(0.8 * data_len)],
+            lengths=[int(0.9 * data_len), data_len - int(0.9 * data_len)],
             generator=torch.Generator().manual_seed(0)
         )
 
@@ -248,6 +249,8 @@ def main(alpha=0.1):
         opts.num_classes = 2
     elif opts.dataset.lower() == 'matting':
         opts.num_classes = 2
+
+    writer = SummaryWriter()
 
     # Setup visualization
     vis = Visualizer(port=opts.vis_port,
@@ -390,6 +393,8 @@ def main(alpha=0.1):
                 interval_loss = interval_loss / 10
                 print("Epoch %d, Itrs %d/%d, Loss=%f" %
                       (cur_epochs, cur_itrs, opts.total_itrs, interval_loss))
+                writer.add_scalar('Epoch', cur_epochs)
+                writer.add_scalar('Loss', interval_loss)
                 interval_loss = 0.0
 
             if (cur_itrs) % opts.val_interval == 0:
@@ -405,6 +410,10 @@ def main(alpha=0.1):
                     best_score = val_score['Mean IoU']
                     save_ckpt('checkpoints/best_%s_%s_os%d.pth' %
                               (opts.model, opts.dataset, opts.output_stride))
+
+                writer.add_scalar('[Val] Overall Acc', val_score['Overall Acc'])
+                writer.add_scalar("[Val] Mean IoU", val_score['Mean IoU'])
+                writer.add_scalar("[Val] Class IoU", val_score['Class IoU'])
 
                 if vis is not None:  # visualize validation score and samples
                     vis.vis_scalar("[Val] Overall Acc", cur_itrs, val_score['Overall Acc'])
