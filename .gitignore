@@ -1,8 +1,11 @@
-venv
-.idea
+*.pyc
+*.jpg
+*.png
+
+checkpoints
+res.md
 test_data_preprocess
 datasets/data
 results
-*.pyc
-checkpoints
-res.md
+venv
+.idea
