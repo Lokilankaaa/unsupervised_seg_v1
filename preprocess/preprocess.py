@@ -45,9 +45,11 @@ def sampler(num, patch_size, positive_pt, indexes, f_directory, b_directory, res
             c[1] * patch_size[1]:(c[1] + 1) * patch_size[0]] = 1
 
         cv2.imwrite(os.path.join(dst, 'imgs', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '.jpg'), res)
-        cv2.imwrite(os.path.join(dst, 'labels', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '_labels.jpg'), labels)
-        cv2.imwrite(os.path.join(dst, 'reference_img', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '_r.jpg'),
-                    img1)
+        cv2.imwrite(os.path.join(dst, 'labels', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '_labels.jpg'),
+                    labels)
+        cv2.imwrite(
+            os.path.join(dst, 'reference_img', pairs[0].split('.')[0] + '_' + pairs[1].split('.')[0] + '_r.jpg'),
+            img1)
 
 
 def sample_from_directory(f_directory, b_directory, num, positive_pt, split, dst, workers=10, resize=(256, 256)):
@@ -78,7 +80,9 @@ def sample_from_directory(f_directory, b_directory, num, positive_pt, split, dst
             raise Exception('No enough imgs')
 
         pool = [mp.Process(target=sampler,
-                           args=(num // workers, patch_size, positive_pt, indexes, f_directory, b_directory, resize, imglist, dst))
+                           args=(
+                           num // workers, patch_size, positive_pt, indexes, f_directory, b_directory, resize, imglist,
+                           dst))
                 for _ in range(workers)]
         for p in pool:
             p.start()

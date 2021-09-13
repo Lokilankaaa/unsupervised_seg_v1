@@ -184,7 +184,7 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
             labels = labels.to(device, dtype=torch.long)
             r = r.to(device, dtype=torch.float32)
 
-            outputs = model(images, r)
+            outputs, loss = model(images, r)
             preds = outputs.detach().max(dim=1)[1].cpu().numpy()
             targets = labels.cpu().numpy()
 
@@ -222,7 +222,7 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
     return score, ret_samples
 
 
-def main():
+def main(alpha=0.1):
     opts = get_argparser().parse_args()
     if opts.dataset.lower() == 'voc':
         opts.num_classes = 21
@@ -356,8 +356,8 @@ def main():
             r = r.to(device, dtype=torch.float32)
 
             optimizer.zero_grad()
-            outputs = model(images, r)
-            loss = criterion(outputs, labels)
+            outputs, mmd_loss = model(images, r)
+            loss = criterion(outputs, labels) + alpha * mmd_loss
             loss.backward()
             optimizer.step()
 

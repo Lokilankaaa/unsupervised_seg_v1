@@ -16,9 +16,9 @@ class _SimpleSegmentationModel(nn.Module):
         features = self.backbone(x)
         r = self.backbone(reference_img)
 
-        x = self.classifier(features, r)
+        x, loss = self.classifier(features, r)
         x = F.interpolate(x, size=input_shape, mode='bilinear', align_corners=False)
-        return x
+        return x, loss
 
 
 class IntermediateLayerGetter(nn.ModuleDict):
