@@ -1,9 +1,12 @@
+import random
+
 import torch
 import torch.utils.data as data
 import numpy as np
 import os
 from .utils import *
 import cv2
+from PIL import Image
 
 
 def voc_cmap(N=256, normalized=False):
@@ -27,31 +30,20 @@ def voc_cmap(N=256, normalized=False):
     return cmap
 
 
-class Blended(data.Dataset):
+class ImgPicker(data.Dataset):
     cmap = voc_cmap()
 
     def __init__(self, root, transform=None):
-        self.imgs = list_files(os.path.join(root, 'imgs'), 'jpg', True)
-        self.labels = list_files(os.path.join(root, 'labels'), 'jpg', True)
-        self.reference_img = list_files(os.path.join(root, 'reference_img'), 'jpg', True)
-
+        self.imgs = list_files(root, 'jpg', True)
         self.imgs.sort()
-        self.labels.sort()
 
-        self.reference_img.sort()
-        # self.transform = transforms.Compose([
-        #     transforms.ToTensor(),
-        #     transforms.Normalize([0.485, 0.456, 0.406],
-        #                          [0.229, 0.224, 0.225], True),
-        # ]) if transform is None else transform
 
         self.transform = transform
 
     def __getitem__(self, idx):
-        img = cv2.imread(self.imgs[idx], cv2.COLOR_BGR2RGB)
-        label = cv2.imread(self.labels[idx], cv2.CV_8UC1)
-        r = cv2.imread(self.reference_img[idx], cv2.COLOR_BGR2RGB)
-        return self.transform(img, label), self.transform(np.expand_dims(label, 2) * r, label)
+        img = Image.open(self.imgs[idx]).convert("RGB")
+        r = Image.open(random.choice(self.imgs)).convert("RGB")
+        return self.transform(img, r), self.transform(r, img)
 
     def __len__(self):
         return len(self.imgs)

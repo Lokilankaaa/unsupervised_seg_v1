@@ -4,8 +4,10 @@
 
 checkpoints
 res.md
+res.pdf
 test_data_preprocess
 datasets/data
 results
 venv
 .idea
+runs

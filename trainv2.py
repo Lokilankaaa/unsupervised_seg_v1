@@ -1,3 +1,5 @@
+import copy
+
 from tqdm import tqdm
 import network
 import utils
@@ -8,9 +10,8 @@ import numpy as np
 
 from torch.utils import data
 from torch.utils.tensorboard import SummaryWriter
-from datasets import VOCSegmentation, Cityscapes, Blended
-from datasets.matting import Matting
-from utils import ext_transforms as et, MMD
+from datasets import VOCSegmentation, Cityscapes, Blended, Matting, ImgPicker
+from utils import ext_transforms as et, MMD, exchange_in_ext
 from metrics import StreamSegMetrics
 
 import torch
@@ -20,7 +21,6 @@ from utils.visualizer import Visualizer
 from PIL import Image
 import matplotlib
 import matplotlib.pyplot as plt
-
 
 def get_argparser():
     parser = argparse.ArgumentParser()
@@ -43,6 +43,7 @@ def get_argparser():
     parser.add_argument("--output_stride", type=int, default=16, choices=[8, 16])
 
     # Train Options
+    parser.add_argument("--epoch", type=int, required=True, default=10)
     parser.add_argument("--test_only", action='store_true', default=False)
     parser.add_argument("--save_val_results", action='store_true', default=True,
                         help="save segmentation results to \"./results\"")
@@ -167,6 +168,8 @@ def get_dataset(opts):
 
     if opts.dataset == 'matting':
         transform = et.ExtCompose([
+            et.ExtRandomRotation(30),
+            et.ExtRandomHorizontalFlip(),
             et.ExtToTensor(),
             et.ExtNormalize(mean=[0.485, 0.456, 0.406],
                             std=[0.229, 0.224, 0.225]),
@@ -180,10 +183,26 @@ def get_dataset(opts):
             generator=torch.Generator().manual_seed(0)
         )
 
-    return train_dst, val_dst
+    phase2_transform = et.ExtCompose([
+            # et.ExtResize(size=opts.crop_size),
+            et.ExtRandomRotation(30),
+            et.ExtRandomHorizontalFlip(),
+            et.ExtToTensor(),
+            et.ExtNormalize(mean=[0.485, 0.456, 0.406],
+                            std=[0.229, 0.224, 0.225]),
+        ])
+    dataset = ImgPicker(root=os.path.join(opts.data_root, 'img'), transform=phase2_transform)
+    data_len = len(dataset)
+    p2_train_dst, p2_val_dst = torch.utils.data.random_split(
+        dataset=dataset,
+        lengths=[int(0.9 * data_len), data_len - int(0.9 * data_len)],
+        generator=torch.Generator().manual_seed(0)
+    )
+
+    return train_dst, val_dst, p2_train_dst, p2_val_dst
 
 
-def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
+def validate(opts, model, loader, device, metrics, ret_samples_ids=None, p_model=None):
     """Do validation and return specified samples"""
     metrics.reset()
     ret_samples = []
@@ -200,10 +219,17 @@ def validate(opts, model, loader, device, metrics, ret_samples_ids=None):
             images = images.to(device, dtype=torch.float32)
             # labels = labels.to(device, dtype=torch.long)
             r = r.to(device, dtype=torch.float32)
+            targets = labels.numpy()
+
+            if p_model is not None:
+                outputs, _ = p_model(images, r)
+                targets = torch.argmax(outputs.clone(), 1).unsqueeze(1)
+                images, targets = exchange_in_ext(images, targets, 10, 10)
+                targets = targets.squeeze(1).cpu().numpy()
 
             outputs, _ = model(images, r)
             preds = outputs.detach().max(dim=1)[1].cpu().numpy()
-            targets = labels.numpy()
+
 
             metrics.update(targets, preds)
             if ret_samples_ids is not None and i in ret_samples_ids:  # get vis samples
@@ -271,11 +297,15 @@ def main(alpha=0.1):
     if opts.dataset == 'voc' and not opts.crop_val:
         opts.val_batch_size = 1
 
-    train_dst, val_dst = get_dataset(opts)
+    train_dst, val_dst, p2_train_dst, p2_val_dst = get_dataset(opts)
     train_loader = data.DataLoader(
         train_dst, batch_size=opts.batch_size, shuffle=True, num_workers=2, drop_last=True)
     val_loader = data.DataLoader(
         val_dst, batch_size=opts.val_batch_size, shuffle=True, num_workers=2, drop_last=True)
+    p2_train_loader = data.DataLoader(
+        p2_train_dst, batch_size=opts.batch_size, shuffle=True, num_workers=2, drop_last=True)
+    p2_val_loader = data.DataLoader(
+        p2_val_dst, batch_size=opts.val_batch_size, shuffle=True, num_workers=2, drop_last=True)
     print("Dataset: %s, Train set: %d, Val set: %d" %
           (opts.dataset, len(train_dst), len(val_dst)))
 
@@ -366,76 +396,121 @@ def main(alpha=0.1):
         print(metrics.to_str(val_score))
         return
 
-    interval_loss = 0
-    while True:  # cur_itrs < opts.total_itrs:
+    p1_interval_loss = 0
+    p2_interval_loss = 0
+    for e in range(opts.epoch):
         # =====  Train  =====
         model.train()
         cur_epochs += 1
-        for ((images, labels), (r, _)) in train_loader:
-            cur_itrs += 1
+        for i in range(30):
+            for ((images, labels), (r, _)) in train_loader:
+                cur_itrs += 1
 
-            images = images.to(device, dtype=torch.float32)
-            labels = labels.to(device, dtype=torch.long)
-            r = r.to(device, dtype=torch.float32)
+                images = images.to(device, dtype=torch.float32)
+                labels = labels.to(device, dtype=torch.long)
+                r = r.to(device, dtype=torch.float32)
 
-            optimizer.zero_grad()
-            outputs, st_r = model(images, r)
+                optimizer.zero_grad()
+                outputs, st_r = model(images, r)
 
-            s = torch.argmax(outputs.clone(), 1).unsqueeze(1) * images
-            s = model.module.backbone(s)
-            s = model.module.classifier.aspp(s['out'])
-            mmd_loss = MMD(s.view(s.shape[0], -1), st_r.view(st_r.shape[0], -1))
+                s = torch.argmax(outputs.clone(), 1).unsqueeze(1) * images
+                s = model.module.backbone(s)
+                s = model.module.classifier.aspp(s['out'])
+                mmd_loss = MMD(s.view(s.shape[0], -1), st_r.view(st_r.shape[0], -1))
 
-            loss = criterion(outputs, labels) + alpha * mmd_loss
-            loss.backward()
-            optimizer.step()
+                loss = criterion(outputs, labels) + alpha * mmd_loss
+                loss.backward()
+                optimizer.step()
 
-            np_loss = loss.detach().cpu().numpy()
-            interval_loss += np_loss
-            if vis is not None:
-                vis.vis_scalar('Loss', cur_itrs, np_loss)
+                np_loss = loss.detach().cpu().numpy()
+                p1_interval_loss += np_loss
 
-            if (cur_itrs) % 10 == 0:
-                interval_loss = interval_loss / 10
-                print("Epoch %d, Itrs %d/%d, Loss=%f" %
-                      (cur_epochs, cur_itrs, opts.total_itrs, interval_loss))
-                writer.add_scalar('Epoch', cur_epochs)
-                writer.add_scalar('Loss', interval_loss)
-                interval_loss = 0.0
+                if (cur_itrs) % 10 == 0:
+                    p1_interval_loss = p1_interval_loss / 10
+                    print("Epoch %d, Itrs %d/%d, p1 Loss=%f" %
+                          (cur_epochs, cur_itrs, opts.total_itrs, p1_interval_loss))
+                    writer.add_scalar('Epoch', cur_epochs)
+                    writer.add_scalar('p1_Loss', p1_interval_loss)
+                    p1_interval_loss = 0.0
 
-            if (cur_itrs) % opts.val_interval == 0:
-                save_ckpt('checkpoints/latest_%s_%s_os%d.pth' %
-                          (opts.model, opts.dataset, opts.output_stride))
-                print("validation...")
-                model.eval()
-                val_score, ret_samples = validate(
-                    opts=opts, model=model, loader=val_loader, device=device, metrics=metrics,
-                    ret_samples_ids=vis_sample_id)
-                print(metrics.to_str(val_score))
-                if val_score['Mean IoU'] > best_score:  # save best network
-                    best_score = val_score['Mean IoU']
-                    save_ckpt('checkpoints/best_%s_%s_os%d.pth' %
+                if (cur_itrs) % opts.val_interval == 0:
+                    save_ckpt('checkpoints/latest_%s_%s_os%d.pth' %
                               (opts.model, opts.dataset, opts.output_stride))
+                    print("validation...")
+                    model.eval()
+                    val_score, ret_samples = validate(
+                        opts=opts, model=model, loader=val_loader, device=device, metrics=metrics,
+                        ret_samples_ids=vis_sample_id)
+                    print(metrics.to_str(val_score))
+                    if val_score['Mean IoU'] > best_score:  # save best network
+                        best_score = val_score['Mean IoU']
+                        save_ckpt('checkpoints/best_%s_%s_os%d.pth' %
+                                  (opts.model, opts.dataset, opts.output_stride))
 
-                writer.add_scalar('[Val] Overall Acc', val_score['Overall Acc'])
-                writer.add_scalar("[Val] Mean IoU", val_score['Mean IoU'])
+                    writer.add_scalar('[Val] p1 Overall Acc', val_score['Overall Acc'])
+                    writer.add_scalar("[Val] p1 Mean IoU", val_score['Mean IoU'])
 
-                if vis is not None:  # visualize validation score and samples
-                    vis.vis_scalar("[Val] Overall Acc", cur_itrs, val_score['Overall Acc'])
-                    vis.vis_scalar("[Val] Mean IoU", cur_itrs, val_score['Mean IoU'])
+                scheduler.step()
 
-                    for k, (img, target, lbl) in enumerate(ret_samples):
-                        img = (denorm(img) * 255).astype(np.uint8)
-                        target = train_dst.decode_target(target).transpose(2, 0, 1).astype(np.uint8)
-                        lbl = train_dst.decode_target(lbl).transpose(2, 0, 1).astype(np.uint8)
-                        concat_img = np.concatenate((img, target, lbl), axis=2)  # concat along width
-                        vis.vis_image('Sample %d' % k, concat_img)
+        break
+        p_model = copy.deepcopy(model)
+        for i in range(30):
+            for (imgs, _), (rs, _) in p2_train_loader:
+                cur_itrs += 1
+
+                with torch.no_grad():
+                    p_model.eval()
+                    outputs, _ = p_model(imgs, rs)
+                    targets = torch.argmax(outputs.clone(), 1).unsqueeze(1)
+                    img, targets = exchange_in_ext(imgs, targets, 20, 20)
+
                 model.train()
-            scheduler.step()
+                imgs = imgs.to(device, dtype=torch.float32)
+                rs = rs.to(device, dtype=torch.float32)
+                targets = targets.squeeze(1).to(device, dtype=torch.long)
 
-            if cur_itrs >= opts.total_itrs:
-                return
+                optimizer.zero_grad()
+                outputs, st_r = model(imgs, rs)
+                s = torch.argmax(outputs.clone(), 1).unsqueeze(1) * imgs
+                s = model.module.backbone(s)
+                s = model.module.classifier.aspp(s['out'])
+                mmd_loss = MMD(s.view(s.shape[0], -1), st_r.view(st_r.shape[0], -1))
+
+                loss = criterion(outputs, targets) + alpha * mmd_loss
+                loss.backward()
+                optimizer.step()
+
+                np_loss = loss.detach().cpu().numpy()
+                p2_interval_loss += np_loss
+
+                if (cur_itrs) % 10 == 0:
+                    p2_interval_loss = p2_interval_loss / 10
+                    print("Epoch %d, Itrs %d/%d, p2 Loss=%f" %
+                          (cur_epochs, cur_itrs, opts.total_itrs, p2_interval_loss))
+                    writer.add_scalar('Epoch', cur_epochs)
+                    writer.add_scalar('p2_Loss', p2_interval_loss)
+                    p2_interval_loss = 0.0
+
+                if (cur_itrs) % opts.val_interval == 0:
+                    save_ckpt('checkpoints/latest_%s_%s_os%d.pth' %
+                              (opts.model, opts.dataset, opts.output_stride))
+                    print("validation...")
+                    model.eval()
+                    val_score, ret_samples = validate(
+                        opts=opts, model=model, loader=p2_val_loader, device=device, metrics=metrics,
+                        ret_samples_ids=vis_sample_id, p_model=p_model)
+                    print(metrics.to_str(val_score))
+                    if val_score['Mean IoU'] > best_score:  # save best network
+                        best_score = val_score['Mean IoU']
+                        save_ckpt('checkpoints/best_%s_%s_os%d.pth' %
+                                  (opts.model, opts.dataset, opts.output_stride))
+
+                    writer.add_scalar('[Val] p2 Overall Acc', val_score['Overall Acc'])
+                    writer.add_scalar("[Val] p2 Mean IoU", val_score['Mean IoU'])
+
+                scheduler.step()
 
 
 if __name__ == '__main__':
     main()
+  

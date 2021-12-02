@@ -51,13 +51,13 @@ class DeepLabHeadV3Plus(nn.Module):
 
         r = self.aspp(reference_img['out'])
 
-        mmd_loss = MMD(output_feature.view(output_feature.shape[0], -1), r.view(r.shape[0], -1))
+        st_r = r.clone()
 
         output_feature = F.interpolate(output_feature, size=low_level_feature.shape[2:], mode='bilinear',
                                        align_corners=False)
         r = F.interpolate(r, size=low_level_feature.shape[2:], mode='bilinear',
                                        align_corners=False)
-        return self.classifier(torch.cat([low_level_feature, output_feature, r], dim=1)), mmd_loss
+        return self.classifier(torch.cat([low_level_feature, output_feature, r], dim=1)), st_r
 
     def _init_weight(self):
         for m in self.modules():

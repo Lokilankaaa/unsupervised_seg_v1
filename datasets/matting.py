@@ -80,7 +80,9 @@ class Matting(data.Dataset):
         mask[mask < 255] = 0
 
         mask[mask == 255.0] = 1
-        return self.transform(image, mask), self.transform(reference_img, reference_img)
+
+        return self.transform(Image.fromarray(image), Image.fromarray(mask)), self.transform(
+            Image.fromarray((np.expand_dims(mask, 2) * reference_img).astype('uint8')), Image.fromarray(reference_img))
 
     @classmethod
     def decode_target(cls, mask):
